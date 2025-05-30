@@ -1,0 +1,161 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_MPU6050.h>
+#include <Servo.h>
+
+// Definirea pinilor
+#define ONE_WIRE_BUS 2
+#define TRIGGER_PIN 12
+#define ECHO_PIN 13
+#define RED_LED_PIN 3
+#define GREEN_LED_PIN 4
+#define BUZZER_PIN 5
+#define SD_CHIP_SELECT 10
+
+// Setarea obiectelor pentru fiecare senzor
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+Adafruit_BMP280 bmp; // BMP280 pentru presiune
+Adafruit_MPU6050 mpu; // MPU9250 pentru IMU
+File myFile;
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD 1602
+long duration;
+int distance;
+
+// Functii pentru senzorii specifici
+void setup() {
+  // Inițializare LCD
+  lcd.begin(16, 2);
+  lcd.print("Initializare...");
+
+  // Inițializare LED-uri și buzzer
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  // Inițializare card SD
+  if (!SD.begin(SD_CHIP_SELECT)) {
+    digitalWrite(RED_LED_PIN, HIGH); // LED roșu dacă nu se inițializează SD-ul
+    lcd.clear();
+    lcd.print("Eroare SD!");
+    while (1);
+  }
+  
+  // Inițializare senzor BMP280
+  if (!bmp.begin()) {
+    digitalWrite(RED_LED_PIN, HIGH); // LED roșu dacă senzorul BMP280 nu este găsit
+    lcd.clear();
+    lcd.print("Eroare BMP280!");
+    while (1);
+  }
+
+  // Inițializare MPU6050
+  if (!mpu.begin()) {
+    digitalWrite(RED_LED_PIN, HIGH); // LED roșu dacă senzorul MPU6050 nu este găsit
+    lcd.clear();
+    lcd.print("Eroare MPU!");
+    while (1);
+  }
+
+  // Inițializare senzor DS18B20
+  sensors.begin();
+
+  // Inițializare senzor ultrasonic HC-SR04
+  pinMode(TRIGGER_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // Afișare pe LCD pentru confirmare
+  lcd.clear();
+  lcd.print("Senzori ok!");
+  digitalWrite(GREEN_LED_PIN, HIGH);  // LED verde aprins când totul este ok
+  delay(2000);  // Delay pentru a vedea mesajul
+
+  // Creare fisier pe cardul SD
+  myFile = SD.open("datalog.txt", FILE_WRITE);
+  if (myFile) {
+    myFile.println("Date de la senzori:");
+    myFile.close();
+  } else {
+    digitalWrite(RED_LED_PIN, HIGH);
+    lcd.clear();
+    lcd.print("Eroare la fisier!");
+    while (1);
+  }
+}
+
+void loop() {
+  // Citirea și afisarea datelor de la senzorii simulați
+
+  // Citirea temperaturii de la DS18B20
+  sensors.requestTemperatures();
+  float tempC = sensors.getTempCByIndex(0);
+
+  // Citirea presiunii de la BMP280
+  float pressure = bmp.readPressure() / 100.0F;
+
+  // Citirea acceleratiei si giroscopului de la MPU6050
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  float gx = g.gyro.x;
+  float ax = a.acceleration.x;
+
+  // Citirea distantei de la senzorul ultrasonic HC-SR04
+  digitalWrite(TRIGGER_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIGGER_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIGGER_PIN, LOW);
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance = duration * 0.034 / 2;
+
+  // Afisarea datelor pe LCD
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Temp: ");
+  lcd.print(tempC);
+  lcd.print(" C");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Dist: ");
+  lcd.print(distance);
+  lcd.print(" cm");
+
+  // Salvarea datelor pe cardul SD
+  myFile = SD.open("datalog.txt", FILE_WRITE);
+  if (myFile) {
+    myFile.print("Temp: ");
+    myFile.print(tempC);
+    myFile.print(" C, ");
+    myFile.print("Pressure: ");
+    myFile.print(pressure);
+    myFile.print(" hPa, ");
+    myFile.print("Accel X: ");
+    myFile.print(ax);
+    myFile.print(" m/s2, ");
+    myFile.print("Gyro X: ");
+    myFile.print(gx);
+    myFile.print(" rad/s, ");
+    myFile.print("Distance: ");
+    myFile.print(distance);
+    myFile.println(" cm");
+    myFile.close();
+  }
+
+  // Buzzer activat la detectarea unui obiect
+  if (distance < 10) {
+    digitalWrite(BUZZER_PIN, HIGH);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  delay(500);  // Pauză între citiri
+}
