@@ -1,0 +1,118 @@
+import socket
+import time
+import board
+import busio
+from gpiozero import InputDevice
+import adafruit_bme680
+import adafruit_ltr390
+import adafruit_icm20x
+
+# === KALMAN FILTER SIMPLU ===
+class KalmanFilter:
+    def _init_(self, Q=0.01, R=1.0):
+        self.Q = Q
+        self.R = R
+        self.x = 0.0
+        self.P = 1.0
+
+    def update(self, measurement):
+        self.P += self.Q
+        K = self.P / (self.P + self.R)
+        self.x += K * (measurement - self.x)
+        self.P *= (1 - K)
+        return self.x
+
+# === INITIALIZARE I2C SI SENZORI ===
+i2c = busio.I2C(board.SCL, board.SDA)
+water_sensor = InputDevice(22)
+
+# BME680
+try:
+    bme = adafruit_bme680.Adafruit_BME680_I2C(i2c, address=0x77)
+except:
+    bme = None
+
+# LTR390
+try:
+    ltr = adafruit_ltr390.LTR390(i2c, address=0x53)
+except:
+    ltr = None
+
+# ICM20948 (IMU)
+try:
+    imu = adafruit_icm20x.ICM20948(i2c, address=0x68)
+    kalman_x = KalmanFilter()
+    kalman_y = KalmanFilter()
+    kalman_z = KalmanFilter()
+except:
+    imu = None
+    kalman_x = kalman_y = kalman_z = None
+
+# === FUNCTIE: CITIRE DATE SENZORI ===
+def genereaza_date():
+    data = "--- MODUL EXTERIOR ---\n"
+    
+    if bme:
+        temperatura = bme.temperature
+        umiditate = bme.relative_humidity
+        presiune = bme.pressure
+        altitudine = 44330 * (1.0 - (presiune / 1013.25) ** (1/5.255))
+        data += f"Temperatura: {temperatura:.1f} C\n"
+        data += f"Umiditate: {umiditate:.1f} %\n"
+        data += f"Presiune: {presiune:.1f} hPa\n"
+        data += f"Altitudine estimata: {altitudine:.1f} m\n"
+
+    if ltr:
+        data += f"Index UV: {ltr.uvi:.2f}\n"
+        data += f"Lumina ambientala: {ltr.light} lux\n"
+
+    if imu and kalman_x:
+        ax, ay, az = imu.acceleration
+        ax_f = kalman_x.update(ax)
+        ay_f = kalman_y.update(ay)
+        az_f = kalman_z.update(az)
+        data += f"Acceleratie [m/s^2] - X: {ax_f:.2f}, Y: {ay_f:.2f}, Z: {az_f:.2f}\n"
+
+    data += f"Apa detectata: {'DA' if water_sensor.is_active else 'NU'}\n"
+    
+    # Afiseaza datele in terminalul local, inainte de conectare
+    print(f"[DEBUG] {data}")
+    
+    return data
+
+# === SERVER TCP CARE TRIMITE CONTINUU ===
+def porneste_server():
+    HOST = "0.0.0.0"
+    PORT = 12345
+    print(f"Ascult pe {HOST}:{PORT} si trimit date la fiecare 3 secunde...")
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((HOST, PORT))
+    s.listen(1)
+
+    try:
+        while True:
+            conn, addr = s.accept()
+            print(f"Conectat la {addr}")
+            try:
+                while True:
+                    data = genereaza_date()  # Genereaza datele de la senzori
+                    conn.sendall(data.encode("utf-8"))
+                    time.sleep(3)
+            except (BrokenPipeError, ConnectionResetError):
+                print("Conexiune intrerupta. Astept alt client...")
+                conn.close()
+    except KeyboardInterrupt:
+        print("Server oprit.")
+    finally:
+        s.close()
+
+# === START ===
+if _name_ == "_main_":
+    while True:
+        # Afiseaza datele in terminal continuu inainte de orice conectare
+        genereaza_date()
+        time.sleep(3)
+    
+    # Porneste server-ul doar dupa ce afisezi datele
+    porneste_server()
