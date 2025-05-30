@@ -1,0 +1,89 @@
+import pygame
+from pygame.locals import *
+import socket
+import numpy as np
+import math
+
+# === SETUP SOCKET ===
+HOST = 'ip-ul-raspberryului'  # ex: "192.168.0.123"
+PORT = 12345
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client.connect((HOST, PORT))
+
+# === PYGAME INIT ===
+pygame.init()
+screen = pygame.display.set_mode((800, 600))
+pygame.display.set_caption("3D IMU Cube")
+
+clock = pygame.time.Clock()
+
+# === DEFINIRE CUB ===
+cube_points = [
+    [-1, -1, -1], [1, -1, -1],
+    [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1],
+    [1, 1, 1], [-1, 1, 1]
+]
+
+edges = [
+    (0, 1), (1, 2), (2, 3), (3, 0),
+    (4, 5), (5, 6), (6, 7), (7, 4),
+    (0, 4), (1, 5), (2, 6), (3, 7)
+]
+
+def rotate_point(x, y, z, ax, ay, az):
+    # Rotatie simplificata 3D
+    cosx, sinx = math.cos(ax), math.sin(ax)
+    cosy, siny = math.cos(ay), math.sin(ay)
+    cosz, sinz = math.cos(az), math.sin(az)
+
+    # Rotatie X
+    y, z = y * cosx - z * sinx, y * sinx + z * cosx
+    # Rotatie Y
+    x, z = x * cosy + z * siny, -x * siny + z * cosy
+    # Rotatie Z
+    x, y = x * cosz - y * sinz, x * sinz + y * cosz
+
+    return x, y, z
+
+def draw_cube(surface, points, ax, ay, az):
+    transformed = []
+    for p in points:
+        x, y, z = rotate_point(p[0], p[1], p[2], ax, ay, az)
+        factor = 200 / (z + 5)
+        x, y = x * factor + 400, -y * factor + 300
+        transformed.append((x, y))
+
+    for edge in edges:
+        pygame.draw.line(surface, (0, 255, 0), transformed[edge[0]], transformed[edge[1]], 2)
+
+# === LOOP ===
+ax, ay, az = 0, 0, 0
+
+running = True
+while running:
+    screen.fill((0, 0, 0))
+    
+    # === RECEPȚIE DATE ===
+    try:
+        data = client.recv(1024).decode('utf-8')
+        for line in data.split("\n"):
+            if "Acceleratie" in line:
+                parts = line.split("X:")[1].split(",")
+                ax = float(parts[0].strip()) / 9.8  # normalize to G
+                ay = float(parts[1].split("Y:")[1].strip()) / 9.8
+                az = float(parts[2].split("Z:")[1].strip()) / 9.8
+    except:
+        pass  # fail silently dacă nu primim date
+
+    draw_cube(screen, cube_points, ax, ay, az)
+
+    for event in pygame.event.get():
+        if event.type == QUIT:
+            running = False
+
+    pygame.display.flip()
+    clock.tick(30)
+
+client.close()
+pygame.quit()
