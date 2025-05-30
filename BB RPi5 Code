@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+import os, time, csv, datetime, subprocess, sys, socket
+import pygame
+from gpiozero import LED, DigitalInputDevice
+
+# ─── CONFIG ─────────────────────────────────────────────────────────────
+FPS = 10
+green = LED(20); red = LED(21)
+co_sensor = DigitalInputDevice(5, pull_up=False)
+flame_sensor = DigitalInputDevice(6, pull_up=False)
+
+PI_ZERO_IP = "192.168.1.101"  # <- actualizează dacă e altul
+PI_ZERO_PORT = 12345
+
+BASE = os.path.expanduser("~/blackbox")
+DATA = os.path.join(BASE, "data")
+IMG = os.path.join(BASE, "images")
+SND_BOOT = os.path.join(BASE, "sounds", "boot.wav")
+SND_ALARM = os.path.join(BASE, "sounds", "alarm.wav")
+HAWK_IMG = os.path.join(IMG, "black_hawk.jpg")
+ELVIS_IMG = os.path.join(IMG, "elvis.jpg")
+ELVIS_WAV = os.path.join(BASE, "sounds", "suspicious_minds.wav")
+VOODOO_WAV = os.path.join(BASE, "sounds", "vodoo_child.wav")
+
+OD_RECORD_CMD = [
+    "libcamera-vid", "-t", "0",
+    "-o", os.path.join(IMG, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")+"_od.h264"),
+    "--codec", "h264","--inline",
+    "--width","1920","--height","1080","--framerate","30",
+    "--post-process-file","/usr/share/rpi-camera-assets/imx500_mobilenet_ssd.json"
+]
+
+PREVIEW_CMD = [
+    "libcamera-vid", "--fullscreen",
+    "--post-process-file","/usr/share/rpi-camera-assets/imx500_mobilenet_ssd.json",
+    "-t","0"
+]
+
+os.makedirs(DATA, exist_ok=True)
+os.makedirs(IMG, exist_ok=True)
+
+od_proc = subprocess.Popen(OD_RECORD_CMD)
+
+pygame.init()
+screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+W,H = screen.get_size()
+font = pygame.font.SysFont("Arial", 28)
+clock = pygame.time.Clock()
+pygame.mixer.init()
+pygame.mixer.music.load(SND_BOOT)
+pygame.mixer.music.play()
+
+elvis = pygame.mixer.Sound(ELVIS_WAV) if os.path.exists(ELVIS_WAV) else None
+vodoo = pygame.mixer.Sound(VOODOO_WAV) if os.path.exists(VOODOO_WAV) else None
+
+mode = "sensor"
+preview_proc = None
+exterior_data = ""
+
+def read_sensors():
+    return bool(co_sensor.value), bool(flame_sensor.value)
+
+def log_data(co, fl):
+    fn = os.path.join(DATA, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")+".csv")
+    with open(fn, "a", newline="") as f:
+        csv.writer(f).writerow([
+            datetime.datetime.now().isoformat(),
+            "OK" if co else "ALARM",
+            "OK" if fl else "ALARM"
+        ])
+
+def splash(text, dur=1.5):
+    surf = font.render(text, True, (255,255,255))
+    rect = surf.get_rect(center=(W//2, H//2))
+    screen.fill((0,0,0)); screen.blit(surf, rect)
+    pygame.display.flip(); time.sleep(dur)
+
+def receive_exterior_data():
+    global exterior_data
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect((PI_ZERO_IP, PI_ZERO_PORT))
+            data = s.recv(4096)
+            exterior_data = data.decode()
+            fn = os.path.join(DATA, datetime.datetime.now().strftime("ext_%Y%m%d_%H%M%S.csv"))
+            with open(fn, "a") as f:
+                f.write(exterior_data + "\n")
+    except Exception as e:
+        exterior_data = f"Modul exterior indisponibil\n{e}"
+
+splash("Black Box")
+splash("Welcome, user")
+
+while True:
+    co, fl = read_sensors()
+    log_data(co, fl)
+
+    if mode=="preview" and preview_proc and preview_proc.poll() is not None:
+        preview_proc = None
+        od_proc = subprocess.Popen(OD_RECORD_CMD)
+        mode = "sensor"
+        screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            if preview_proc: preview_proc.terminate()
+            od_proc.terminate()
+            pygame.quit()
+            sys.exit()
+        if e.type == pygame.KEYDOWN:
+            ch = e.unicode.lower()
+
+            if ch=="q" or e.key==pygame.K_ESCAPE:
+                if preview_proc: preview_proc.terminate()
+                od_proc.terminate()
+                pygame.quit(); sys.exit()
+
+            elif ch=="b":
+                if preview_proc: preview_proc.terminate(); preview_proc = None
+                if elvis: elvis.stop()
+                if vodoo: vodoo.stop()
+                if od_proc.poll() is not None:
+                    od_proc = subprocess.Popen(OD_RECORD_CMD)
+                mode = "sensor"
+                screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+            elif ch=="c":
+                if od_proc: od_proc.terminate()
+                if not preview_proc:
+                    pygame.display.iconify()
+                    preview_proc = subprocess.Popen(PREVIEW_CMD)
+                mode = "preview"
+
+            elif ch=="i":
+                if vodoo: vodoo.play(-1); elvis.stop()
+                if preview_proc: preview_proc.terminate(); preview_proc = None
+                if od_proc.poll() is not None: od_proc=subprocess.Popen(OD_RECORD_CMD)
+                mode="hawk"; screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+            elif ch=="e":
+                if elvis: elvis.play(-1); vodoo.stop()
+                if preview_proc: preview_proc.terminate(); preview_proc = None
+                if od_proc.poll() is not None: od_proc=subprocess.Popen(OD_RECORD_CMD)
+                mode="elvis"; screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+            elif ch=="v":
+                if vodoo: vodoo.play(-1); elvis.stop()
+                if preview_proc: preview_proc.terminate(); preview_proc = None
+                if od_proc.poll() is not None: od_proc=subprocess.Popen(OD_RECORD_CMD)
+                mode="voodoo"; screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+            elif ch=="o":
+                receive_exterior_data()
+                mode = "exterior"
+                screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
+
+    if mode == "sensor":
+        screen.fill((30,30,30))
+        pygame.draw.rect(screen,(50,50,50),(0,0,W,60))
+        screen.blit(font.render("Modul interior",True,(255,255,255)),(20,15))
+        ts = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        screen.blit(font.render(ts,True,(200,200,200)),(200,15))
+        for idx,(lbl,val) in enumerate([("Senzor monoxid",co),("Senzor flacara",fl)]):
+            x,y = 50,100+idx*150
+            pygame.draw.rect(screen,(50,50,50),(x,y,W-100,120))
+            screen.blit(font.render(lbl,True,(255,255,255)),(x+10,y+10))
+            stat = "OK" if val else ("Atentie! Monoxid de carbon prezent" if idx==0 else "Atentie! Flacara")
+            col  = (0,200,0) if val else (200,0,0)
+            screen.blit(font.render(stat,True,col),(x+10,y+60))
+        if co and fl:
+            green.on(); red.off()
+        else:
+            green.off(); red.on()
+            pygame.mixer.Sound(SND_ALARM).play()
+
+    elif mode == "exterior":
+        screen.fill((0,0,0))
+        pygame.draw.rect(screen,(0,0,70),(0,0,W,60))
+        screen.blit(font.render("Modul exterior",True,(255,255,255)),(20,15))
+        y = 100
+        for line in exterior_data.split("\n"):
+            screen.blit(font.render(line,True,(255,255,255)),(50,y))
+            y += 35
+
+    elif mode == "preview":
+        pass
+
+    else:
+        path = HAWK_IMG if mode=="hawk" else (ELVIS_IMG if mode=="elvis" else HAWK_IMG)
+        img = pygame.image.load(path)
+        screen.blit(pygame.transform.scale(img,(W,H)),(0,0))
+
+    pygame.display.flip()
+    clock.tick(FPS)
