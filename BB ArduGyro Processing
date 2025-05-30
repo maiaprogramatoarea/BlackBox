@@ -1,0 +1,57 @@
+import processing.serial.*;
+Serial myPort;
+
+float gx = 0, gy = 0, gz = 0;
+
+float rotX = 0;
+float rotY = 0;
+float rotZ = 0;
+
+void setup() {
+  size(800, 600, P3D);
+  background(0);
+  println(Serial.list());
+  myPort = new Serial(this, "COM6", 9600);
+  myPort.bufferUntil('\n');
+}
+
+void draw() {
+  background(0);
+  lights();
+  
+  // Rotim cubul
+  translate(width * 0.75, height / 2);
+  rotateX(rotX);
+  rotateY(rotY);
+  rotateZ(rotZ);
+  fill(100, 200, 255);
+  stroke(255);
+  box(100);
+  
+  // Update cu viteze integrate
+  rotX += radians(gx);
+  rotY += radians(gy);
+  rotZ += radians(gz);
+
+  // Reset pozitia pentru text
+  camera();
+  fill(255);
+  textSize(14);
+  text("GX: " + gx + "   GY: " + gy + "   GZ: " + gz, 20, 30);
+}
+
+void serialEvent(Serial myPort) {
+  String inString = myPort.readStringUntil('\n');
+  if (inString != null) {
+    inString = trim(inString);
+    
+    if (inString.startsWith("GX:")) {
+      gx = parseFloat(inString.substring(3).trim());
+    } else if (inString.startsWith("GY:")) {
+      gy = parseFloat(inString.substring(3).trim());
+    } else if (inString.startsWith("GZ:")) {
+      gz = parseFloat(inString.substring(3).trim());
+    }
+    // Dacă vrei să adaugi și AX, AY, AZ, le poți stoca aici
+  }
+}
